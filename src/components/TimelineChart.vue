@@ -2,10 +2,11 @@
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { useFilterStore } from '@/stores/filter'
-import { examCenters, gpsSamples } from '@/mock/data'
-import type { GpsSample, DelayEvent } from '@/types'
+import { usePlaybackStore } from '@/stores/playback'
+import type { DelayEvent } from '@/types'
 
-const store = useFilterStore()
+const filterStore = useFilterStore()
+const playbackStore = usePlaybackStore()
 const chartRef = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
 const emit = defineEmits<{
@@ -24,9 +25,12 @@ function minutesToTime(m: number): string {
 }
 
 function buildOption() {
-  const routes = store.filteredRoutes
-  const delays = store.filteredDelayEvents
-  const centerMap = new Map(examCenters.map((c) => [c.id, c.name]))
+  const routes = filterStore.filteredRoutes
+  const delays = filterStore.filteredDelayEvents
+  const samples = filterStore.gpsSamples
+  const centers = filterStore.examCenters
+  const centerMap = new Map(centers.map((c) => [c.id, c.name]))
+  const playbackCutoff = playbackStore.currentMinute
 
   const grouped = new Map<string, typeof routes>()
   routes.forEach((r) => {
@@ -62,11 +66,11 @@ function buildOption() {
       },
     })
 
-    const routeSamples = gpsSamples.filter((s) => s.routeId === route.id)
+    const routeSamples = samples.filter((s) => s.routeId === route.id)
     const points: number[][] = []
     routeSamples.forEach((s) => {
       const t = timeToMinutes(s.timestamp)
-      if (t >= startMin - 30 && t <= endMin + 30) {
+      if (t >= startMin - 30 && t <= endMin + 30 && t <= playbackCutoff) {
         points.push([t, yIdx, s.speed])
       }
     })
@@ -159,6 +163,33 @@ function buildOption() {
       z: 8,
     },
     ...gpsLineSeries,
+    {
+      name: '当前时间线',
+      type: 'custom',
+      renderItem: (_params: any, api: any) => {
+        const coord = api.coord([playbackCutoff, 0])
+        const coordEnd = api.coord([playbackCutoff, yCategories.length - 1])
+        return {
+          type: 'line',
+          shape: {
+            x1: coord[0],
+            y1: coord[1] - 20,
+            x2: coordEnd[0],
+            y2: coordEnd[1] + 20,
+          },
+          style: {
+            stroke: '#00e676',
+            lineWidth: 2,
+            lineDash: [4, 4],
+          },
+          silent: true,
+        }
+      },
+      data: [{ value: [playbackCutoff, 0] }],
+      encode: { x: 0, y: 1 },
+      z: 20,
+      silent: true,
+    },
   ]
 
   return {
@@ -179,7 +210,7 @@ function buildOption() {
             `类型: ${dl.type}<br/>` +
             `报备: ${dl.isReported ? '已报备' : '未报备'}`
         }
-        if (d.value && d.value.length === 4 && !d.delay) {
+        if (d.value && d.value.length === 4 && !d.delay && !params.seriesName?.startsWith('GPS_')) {
           return `计划窗口: ${minutesToTime(d.value[0])} - ${minutesToTime(d.value[0] + d.value[2])}`
         }
         if (params.seriesName?.startsWith('GPS_') && d.value) {
@@ -192,8 +223,43 @@ function buildOption() {
       left: 160,
       right: 40,
       top: 30,
-      bottom: 50,
+      bottom: 80,
     },
+    dataZoom: [
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        minValue: xMin,
+        maxValue: xMax,
+        start: 0,
+        end: 100,
+        height: 20,
+        bottom: 40,
+        borderColor: '#334155',
+        backgroundColor: '#0f172a',
+        fillerColor: 'rgba(0, 230, 118, 0.15)',
+        handleStyle: { color: '#00e676', borderColor: '#0f172a' },
+        moveHandleStyle: { color: '#00e676' },
+        selectedDataBackground: {
+          lineStyle: { color: '#475569' },
+          areaStyle: { color: 'rgba(71, 85, 105, 0.2)' },
+        },
+        textStyle: {
+          color: '#94a3b8',
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: 10,
+        },
+        labelFormatter: (v: number) => minutesToTime(v),
+      },
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        minValue: xMin,
+        maxValue: xMax,
+        start: 0,
+        end: 100,
+      },
+    ],
     xAxis: {
       type: 'value',
       min: xMin,
@@ -261,7 +327,7 @@ onUnmounted(() => {
 })
 
 watch(
-  () => store.filterState,
+  () => filterStore.filterState,
   () => {
     nextTick(renderChart)
   },
@@ -269,7 +335,22 @@ watch(
 )
 
 watch(
-  () => store.delayEvents,
+  () => filterStore.delayEvents,
+  () => {
+    nextTick(renderChart)
+  },
+  { deep: true }
+)
+
+watch(
+  () => playbackStore.currentMinute,
+  () => {
+    nextTick(renderChart)
+  }
+)
+
+watch(
+  [() => filterStore.examCenters, () => filterStore.busRoutes, () => filterStore.gpsSamples],
   () => {
     nextTick(renderChart)
   },

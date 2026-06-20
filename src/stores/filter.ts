@@ -1,18 +1,60 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import type { FilterState, DelayEvent } from '@/types'
-import { busRoutes, examCenters, gpsSamples, delayEvents as mockDelayEvents } from '@/mock/data'
+import { ref, computed, watch } from 'vue'
+import type { FilterState, DelayEvent, ExamCenter, BusRoute, GpsSample } from '@/types'
+import { dataCache, fetchAllData, dataLastRefresh, dataRefreshError } from '@/services/dataService'
 
 export const useFilterStore = defineStore('filter', () => {
-  const selectedCenters = ref<string[]>(examCenters.map((c) => c.id))
-  const selectedVehicles = ref<string[]>(busRoutes.map((r) => r.id))
+  const examCenters = ref<ExamCenter[]>(dataCache.examCenters)
+  const busRoutes = ref<BusRoute[]>(dataCache.busRoutes)
+  const gpsSamples = ref<GpsSample[]>(dataCache.gpsSamples)
+  const delayEvents = ref<DelayEvent[]>(JSON.parse(JSON.stringify(dataCache.delayEvents)))
+
+  const selectedCenters = ref<string[]>(examCenters.value.map((c) => c.id))
+  const selectedVehicles = ref<string[]>(busRoutes.value.map((r) => r.id))
   const specialStudentOnly = ref(false)
   const rainReported = ref(false)
 
-  const delayEvents = ref<DelayEvent[]>(JSON.parse(JSON.stringify(mockDelayEvents)))
+  function refreshFromCache() {
+    examCenters.value = dataCache.examCenters
+    busRoutes.value = dataCache.busRoutes
+    gpsSamples.value = dataCache.gpsSamples
+    const newDelays = JSON.parse(JSON.stringify(dataCache.delayEvents))
+    delayEvents.value.forEach((de) => {
+      const existing = newDelays.find((nd: DelayEvent) => nd.routeId === de.routeId)
+      if (existing && de.isReported) {
+        existing.isReported = true
+      }
+    })
+    delayEvents.value = newDelays
+
+    selectedCenters.value = selectedCenters.value.filter((id) =>
+      examCenters.value.some((c) => c.id === id)
+    )
+    if (selectedCenters.value.length === 0) {
+      selectedCenters.value = examCenters.value.map((c) => c.id)
+    }
+    selectedVehicles.value = selectedVehicles.value.filter((id) =>
+      busRoutes.value.some((r) => r.id === id)
+    )
+    if (selectedVehicles.value.length === 0) {
+      selectedVehicles.value = busRoutes.value.map((r) => r.id)
+    }
+  }
+
+  watch(
+    () => dataLastRefresh.value,
+    () => {
+      refreshFromCache()
+    }
+  )
+
+  async function loadData() {
+    await fetchAllData(true)
+    refreshFromCache()
+  }
 
   const filteredRoutes = computed(() => {
-    return busRoutes.filter((r) => {
+    return busRoutes.value.filter((r) => {
       if (!selectedCenters.value.includes(r.examCenterId)) return false
       if (!selectedVehicles.value.includes(r.id)) return false
       if (specialStudentOnly.value && !r.hasSpecialStudent) return false
@@ -61,18 +103,24 @@ export const useFilterStore = defineStore('filter', () => {
   }))
 
   return {
+    examCenters,
+    busRoutes,
+    gpsSamples,
+    delayEvents,
     selectedCenters,
     selectedVehicles,
     specialStudentOnly,
     rainReported,
-    delayEvents,
     filteredRoutes,
     filteredDelayEvents,
     filterState,
+    dataLastRefresh,
+    dataRefreshError,
     toggleRainReported,
     setCenters,
     setVehicles,
     setSpecialStudentOnly,
     setRainReported,
+    loadData,
   }
 })
