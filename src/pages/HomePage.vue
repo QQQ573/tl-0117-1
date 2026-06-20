@@ -4,6 +4,7 @@ import TimelineChart from '@/components/TimelineChart.vue'
 import DelayLabels from '@/components/DelayLabels.vue'
 import DetailPanel from '@/components/DetailPanel.vue'
 import PlaybackBar from '@/components/PlaybackBar.vue'
+import DisposalDrawer from '@/components/DisposalDrawer.vue'
 import { ref, onMounted, onUnmounted } from 'vue'
 import type { DelayEvent } from '@/types'
 import { useFilterStore } from '@/stores/filter'
@@ -14,6 +15,7 @@ const filterStore = useFilterStore()
 const playbackStore = usePlaybackStore()
 
 const selectedDelay = ref<DelayEvent | null>(null)
+const disposalDrawerOpen = ref(false)
 
 function onSelectDelay(event: DelayEvent) {
   selectedDelay.value = event
@@ -25,6 +27,14 @@ function onLabelSelect(event: DelayEvent) {
 
 function closePanel() {
   selectedDelay.value = null
+}
+
+function onDetailSaved() {
+  // 刷新标签显示
+}
+
+function toggleDisposalDrawer() {
+  disposalDrawerOpen.value = !disposalDrawerOpen.value
 }
 
 onMounted(() => {
@@ -41,7 +51,7 @@ onUnmounted(() => {
 <template>
   <div class="h-screen flex flex-col bg-[#1a2332] text-[#e2e8f0] relative">
     <header class="flex-shrink-0">
-      <FilterBar />
+      <FilterBar @toggle-disposal="toggleDisposalDrawer" />
     </header>
 
     <div class="flex-1 flex overflow-hidden">
@@ -56,7 +66,9 @@ onUnmounted(() => {
 
     <PlaybackBar />
 
-    <DetailPanel :event="selectedDelay" @close="closePanel" />
+    <DetailPanel :event="selectedDelay" @close="closePanel" @saved="onDetailSaved" />
+
+    <DisposalDrawer v-model:open="disposalDrawerOpen" />
 
     <Transition name="toast">
       <div

@@ -3,10 +3,12 @@ import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { useFilterStore } from '@/stores/filter'
 import { usePlaybackStore } from '@/stores/playback'
-import type { DelayEvent } from '@/types'
+import { useRiskStore } from '@/stores/risk'
+import type { DelayEvent, RouteRisk } from '@/types'
 
 const filterStore = useFilterStore()
 const playbackStore = usePlaybackStore()
+const riskStore = useRiskStore()
 const chartRef = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
 const emit = defineEmits<{
@@ -32,6 +34,8 @@ function buildOption() {
   const centerMap = new Map(centers.map((c) => [c.id, c.name]))
   const playbackCutoff = playbackStore.currentMinute
 
+  const risks = riskStore.calculateRisks(routes, samples, playbackCutoff)
+
   const grouped = new Map<string, typeof routes>()
   routes.forEach((r) => {
     const cname = centerMap.get(r.examCenterId) || r.examCenterId
@@ -52,11 +56,14 @@ function buildOption() {
   const planBandData: any[] = []
   const delayMarkData: any[] = []
   const gpsLineSeries: any[] = []
+  const riskDotData: any[] = []
+  const predictionLineData: any[] = []
 
   routes.forEach((route) => {
     const yIdx = routeYIndex.get(route.id)!
     const startMin = timeToMinutes(route.plannedArriveStart)
     const endMin = timeToMinutes(route.plannedArriveEnd)
+    const risk = risks.get(route.id)
 
     planBandData.push({
       value: [startMin, yIdx, endMin - startMin, route.id],
@@ -64,6 +71,14 @@ function buildOption() {
         color: route.color,
         opacity: 0.25,
       },
+    })
+
+    const riskColor = risk ? riskStore.riskColor[risk.level] : '#64748b'
+    riskDotData.push({
+      value: [startMin - 25, yIdx, route.id],
+      itemStyle: { color: riskColor },
+      riskLevel: risk?.level || 'normal',
+      routeId: route.id,
     })
 
     const routeSamples = samples.filter((s) => s.routeId === route.id)
@@ -90,6 +105,20 @@ function buildOption() {
         showSymbol: true,
         hoverAnimation: false,
       })
+
+      if (risk && risk.level === 'critical' && points.length > 0) {
+        const lastPoint = points[points.length - 1]
+        const predictEnd = Math.min(risk.estimatedArrive, 9 * 60 + 30)
+        predictionLineData.push({
+          value: [lastPoint[0], yIdx, predictEnd, route.id],
+          lineStyle: {
+            color: '#ef4444',
+            width: 2,
+            type: 'dashed',
+          },
+          risk,
+        })
+      }
     }
   })
 
@@ -112,6 +141,41 @@ function buildOption() {
   const xMax = 9 * 60
 
   const series: any[] = [
+    {
+      name: '风险色点',
+      type: 'custom',
+      renderItem: (params: any, api: any) => {
+        const x = api.value(0)
+        const yIdx = api.value(1)
+        const coord = api.coord([x, yIdx])
+        return {
+          type: 'circle',
+          shape: {
+            cx: coord[0] - 15,
+            cy: coord[1],
+            r: 4,
+          },
+          style: api.style(),
+        }
+      },
+      data: riskDotData,
+      encode: { x: 0, y: 1 },
+      z: 15,
+      tooltip: {
+        formatter: (params: any) => {
+          const d = params.data
+          const r = risks.get(d.routeId)
+          if (!r) return ''
+          const label = riskStore.riskLabel[d.riskLevel as keyof typeof riskStore.riskLabel]
+          const color = riskStore.riskColor[d.riskLevel as keyof typeof riskStore.riskColor]
+          return `<span style="color:${color}"><b>${label}</b></span><br/>` +
+            `均速: ${r.avgSpeed} km/h<br/>` +
+            `剩余: ${r.remainingKm} km<br/>` +
+            `预计到达: ${minutesToTime(r.estimatedArrive)}<br/>` +
+            `超计划: ${r.minutesBeyondPlan > 0 ? '+' : ''}${r.minutesBeyondPlan} min`
+        },
+      },
+    },
     {
       name: '计划到达窗',
       type: 'custom',
@@ -162,6 +226,43 @@ function buildOption() {
       encode: { x: [0, 2], y: 1 },
       z: 8,
     },
+    {
+      name: '预测延伸段',
+      type: 'custom',
+      renderItem: (params: any, api: any) => {
+        const startX = api.value(0)
+        const yIdx = api.value(1)
+        const endX = api.value(2)
+        const startCoord = api.coord([startX, yIdx])
+        const endCoord = api.coord([endX, yIdx])
+        return {
+          type: 'line',
+          shape: {
+            x1: startCoord[0],
+            y1: startCoord[1],
+            x2: endCoord[0],
+            y2: endCoord[1],
+          },
+          style: {
+            stroke: '#ef4444',
+            lineWidth: 2,
+            lineDash: [6, 4],
+          },
+        }
+      },
+      data: predictionLineData,
+      encode: { x: [0, 2], y: 1 },
+      z: 9,
+      tooltip: {
+        formatter: (params: any) => {
+          const r = params.data.risk as RouteRisk
+          if (!r) return ''
+          return `<b style="color:#ef4444">高危预测</b><br/>` +
+            `预计到达: ${minutesToTime(r.estimatedArrive)}<br/>` +
+            `超计划: +${r.minutesBeyondPlan} min`
+        },
+      },
+    },
     ...gpsLineSeries,
     {
       name: '当前时间线',
@@ -210,7 +311,7 @@ function buildOption() {
             `类型: ${dl.type}<br/>` +
             `报备: ${dl.isReported ? '已报备' : '未报备'}`
         }
-        if (d.value && d.value.length === 4 && !d.delay && !params.seriesName?.startsWith('GPS_')) {
+        if (d.value && d.value.length === 4 && !d.delay && !params.seriesName?.startsWith('GPS_') && params.seriesName !== '预测延伸段' && params.seriesName !== '风险色点') {
           return `计划窗口: ${minutesToTime(d.value[0])} - ${minutesToTime(d.value[0] + d.value[2])}`
         }
         if (params.seriesName?.startsWith('GPS_') && d.value) {
@@ -220,7 +321,7 @@ function buildOption() {
       },
     },
     grid: {
-      left: 160,
+      left: 180,
       right: 40,
       top: 30,
       bottom: 80,

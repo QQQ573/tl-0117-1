@@ -2,6 +2,11 @@
 import { useFilterStore } from '@/stores/filter'
 import { useIpadReadOnly } from '@/composables/useIpadReadOnly'
 import { computed } from 'vue'
+import KpiCapsules from '@/components/KpiCapsules.vue'
+
+const emit = defineEmits<{
+  (e: 'toggle-disposal'): void
+}>()
 
 const store = useFilterStore()
 const { isReadOnly } = useIpadReadOnly()
@@ -110,15 +115,24 @@ const rainLabel = computed(() => (store.rainReported ? '暴雨封路已报备 �
       {{ rainLabel }}
     </button>
 
+    <KpiCapsules />
+
+    <button
+      class="px-3 py-1.5 rounded bg-[#3b82f6]/20 text-[#60a5fa] text-xs font-mono border border-[#3b82f6]/30 hover:bg-[#3b82f6]/30 transition-colors flex items-center gap-1"
+      @click="emit('toggle-disposal')"
+    >
+      📋 处置台账
+    </button>
+
+    <div v-if="isReadOnly" class="px-3 py-1.5 rounded bg-[#ffa726]/15 text-[#ffa726] text-xs font-mono border border-[#ffa726]/30">
+      只读模式 (iPad)
+    </div>
+
     <div v-if="store.dataLastRefresh" class="ml-auto flex items-center gap-2">
       <span class="w-2 h-2 rounded-full bg-[#00e676] animate-pulse"></span>
       <span class="text-[10px] font-mono text-[#64748b]">
         刷新于 {{ store.dataLastRefresh }}
       </span>
-    </div>
-
-    <div v-if="isReadOnly" class="px-3 py-1.5 rounded bg-[#ffa726]/15 text-[#ffa726] text-xs font-mono border border-[#ffa726]/30">
-      只读模式 (iPad)
     </div>
   </div>
 </template>

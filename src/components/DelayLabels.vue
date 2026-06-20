@@ -44,6 +44,9 @@ const labeledDelays = computed(() => {
       <div class="text-[10px] opacity-60 mt-0.5">
         {{ ev.segmentStart }}–{{ ev.segmentEnd }} · {{ ev.type }}
       </div>
+      <div v-if="ev.remark" class="text-[9px] mt-0.5 opacity-60 truncate" :title="ev.remark">
+        备注：{{ ev.remark }}
+      </div>
       <div v-if="ev.isReported" class="text-[9px] mt-0.5 opacity-50">已报备</div>
     </div>
     <div v-if="labeledDelays.length === 0" class="text-[11px] text-[#475569] font-mono px-1">
